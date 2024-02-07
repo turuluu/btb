@@ -1,3 +1,4 @@
+import contextlib
 import os
 import logging
 from pathlib import Path
@@ -15,29 +16,76 @@ class LoggedRunError(Exception):
     pass
 
 
-def tail_log(n):
-    w = 80
-    start_msg = 'tailing log file '
-    end_msg = 'end of tailing of the log file '
-    tail = logging.getLogger('tail')
+class StdErrPrintMonkeyPatch:
+    from functools import partial
+    info = partial(print, file=sys.stderr, flush=True)
+
+
+def read_log():
     with open(LOG_FILEPATH, 'r', encoding='UTF-8') as rf:
         build_log = rf.read().splitlines()
-    if len(build_log) > 0:
-        half = ('- ' * ((w - len(start_msg)) // 4))
-        tail.info(half + start_msg + half)
 
-        for line in build_log[-n:]:
+    return build_log
+
+
+@contextlib.contextmanager
+def header_footer(header, footer, print_func, width=80):
+    half = ('- ' * ((width - len(header)) // 4))
+    print_func(half + header + half)
+    yield
+    half = ('- ' * ((width - len(footer)) // 4))
+    print_func(half + footer + half)
+
+
+def tail_log(logged, n):
+    if len(logged) > 0:
+        for line in logged[-n:]:
+            yield line
+
+
+def grep_errors(logged):
+    if logged is not None and len(logged) > 0:
+        for line in logged:
+            or_conds = [
+                'error' in line.lower(),
+                'FAIL' in line,  # validation
+            ]
+            not_conds = [
+                'export' in line,  # export definitions
+                '-Werror' in line,  # Reduce compiler commands
+                'ERROR' in line,  # build macros, don't want them
+                line.strip().startswith('/'),  # Pace application calls
+                line.startswith('[Info]'),
+                line.startswith('[Warning]')
+            ]
+
+            if any(or_conds) and not any(not_conds):
+                yield line
+
+
+def print_cmd_errors(use_print=False):
+    if use_print:
+        grep = StdErrPrintMonkeyPatch()
+    else:
+        grep = log
+
+    with header_footer('looking for lines with "error"', 'end of grepping errors ', grep.info):
+        for line in grep_errors(read_log()):
+            grep.info(line)
+
+
+def print_cmd_tail(n=80):
+    tail = logging.getLogger('tail')
+    with header_footer('tailing log file ', 'end of tailing of the log file ', tail.info):
+        for line in tail_log(read_log(), n):
             tail.info(line)
-
-        half = ('- ' * ((w - len(end_msg)) // 4))
-        tail.info(half + end_msg + half)
 
 
 class LoggedCmd:
     """Wrapper for subprocess methods that log to a file and can be patched/mocked for testing."""
 
     @staticmethod
-    def run(cmd_lst: list, cwd=None, exc=None, info_msg=None, to_stdout=False, **kwargs):
+    def run(cmd_lst: list, cwd=None, exc=None, info_msg=None, to_stdout=False, raise_exc=True, **kwargs):
         """Helper for subprocess that logs to file the output of the command.
         Also defines a default working directory with Path.cwd()
 
@@ -45,12 +93,15 @@ class LoggedCmd:
             This has to be a staticmethod so that it can be used outside of this file (imports)
 
         Args:
-            cmd_list: passed to subprocess.run
+            cmd_lst: passed to subprocess.run
             cwd:        Current Working Directory - defines where the subprocess.run is executed
             exc:      Either a string for a message to print out if subprocess.run fails. None by default in which case prints
                         only the return code
                         or
                         An exception class (with or without a msg) which to raise instead of the LoggedRunError
+            info_msg:   Message to print out when running the command (default None and no print out)
+            to_stdout:  Log messages to stdout instead of collecting them with log handler (default False)
+            raise_exc:  If exceptions occur, raise them (default True)
 
         Raises:
             LoggedRunException - Catch this explicitly to handle when subprocess.run retval != 0
@@ -85,18 +136,21 @@ class LoggedCmd:
 
         # Custom exception handling
         if res is None or res.returncode != 0:
-            tail_log(40)
+            print_cmd_tail(40)
+            print_cmd_errors()
             if res is not None:
                 log.error('return code: %s', res.returncode)
-            if exc is not None:
-                if isinstance(exc, str):
-                    log.error(exc)
-                    raise LoggedRunError
-                elif isinstance(exc, Exception):
-                    raise exc
 
-            # Fallback exception type
-            raise LoggedRunError
+            if raise_exc:
+                if exc is not None:
+                    if isinstance(exc, str):
+                        log.error(exc)
+                        raise LoggedRunError
+                    elif isinstance(exc, Exception):
+                        raise exc
+
+                # Fallback exception type
+                raise LoggedRunError
 
         return res
 
@@ -109,7 +163,7 @@ class LoggedCmd:
             This has to be a staticmethod so that it can be used outside of this file (imports)
 
         Args:
-            cmd_list: passed to subprocess.run
+            cmd_lst: passed to subprocess.run
             cwd:        Current Working Directory - defines where the subprocess.run is executed
             exc:      Either a string for a message to print out if subprocess.run fails. None by default in which case prints
                         only the return code

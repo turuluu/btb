@@ -2,6 +2,8 @@ from btb.commands import LoggedCmd, log
 from pathlib import Path
 import os
 import stat
+import copy
+import pprint
 
 
 def file_permissions(f):
@@ -30,10 +32,27 @@ def file_permissions(f):
 #     log.debug(f'found files: {repr(files)}')
 #
 #     return len(files) > 0
+def format_locals(lcls):
+    _locals = copy.deepcopy(lcls)
+
+    return pprint.pformat(_locals, width=120)
+
+
+def safe_copy(src: Path, dst: Path):
+    """python's shutil.copytree and copyfile don't work on windows appropriately resulting
+    in obscure permissions errors, rendering some artefacts broken
+    so that they are not verified as wrapped after the copy process, etc. This doesn't
+    happen with system level copy command thus it's the reasonable mitigation step
+
+    On python reference docs ( https://docs.python.org/3/library/shutil.html ):
+    > Even the higher-level file copying functions (shutil.copy(), shutil.copy2()) cannot copy all file metadata.
+    """
+    LoggedCmd.run(['cp', src, dst])
+
 
 def safe_copytree(src: Path, dst: Path):
     """python's shutil.copytree and copyfile don't work on windows appropriately resulting
-    in obscure permissions errors, rendering wraptool wrapped artefacts broken
+    in obscure permissions errors, rendering some artefacts broken
     so that they are not verified as wrapped after the copy process, etc. This doesn't
     happen with system level copy command thus it's the reasonable mitigation step
 
@@ -74,15 +93,3 @@ def mac_force_access_all(path, is_executable=False):
             chmod(file_dir, 0o755, False)
         else:
             chmod(file_dir, 0o644, False)
-
-
-def safe_copy(src: Path, dst: Path):
-    """python's shutil.copytree and copyfile don't work on windows appropriately resulting
-    in obscure permissions errors, rendering wraptool wrapped artefacts broken
-    so that they are not verified as wrapped after the copy process, etc. This doesn't
-    happen with system level copy command thus it's the reasonable mitigation step
-
-    On python reference docs ( https://docs.python.org/3/library/shutil.html ):
-    > Even the higher-level file copying functions (shutil.copy(), shutil.copy2()) cannot copy all file metadata.
-    """
-    LoggedCmd.run(['cp', src, dst])
