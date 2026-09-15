@@ -1,12 +1,12 @@
 [tool.poetry]
 name = "btb"
-version = "0.1.6"
+version = "0.2.0"
 description = "Bob the builder - utilities"
 authors = ["Joni Turunen <rojun.itu@gmail.com>"]
 
 [tool.poetry.dependencies]
 python = ">=3.7, <4.0"
-elevate = { git="https://github.com/d3rp/elevate.git", branch="venv_option" }
+elevate = { git="https://github.com/turuluu/elevate.git", branch="venv_option" }
 
 [tool.poetry.dev-dependencies]
 pytest = ">=7.1"
